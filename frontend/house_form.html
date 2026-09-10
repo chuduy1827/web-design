@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="vi">
+
+<head>
+    <meta charset="UTF-8">
+    <title>Dự đoán giá nhà</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 40px;
+        }
+        
+        .form-group {
+            margin-bottom: 15px;
+        }
+        
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+        
+        input,
+        select {
+            width: 300px;
+            padding: 8px;
+            box-sizing: border-box;
+        }
+        
+        button {
+            padding: 10px 15px;
+            background: #007BFF;
+            color: white;
+            border: none;
+            cursor: pointer;
+        }
+        
+        button:hover {
+            background: #0056b3;
+        }
+        
+        #result {
+            margin-top: 20px;
+            font-size: 1.2em;
+            font-weight: bold;
+        }
+        
+        .error {
+            color: red;
+        }
+    </style>
+</head>
+
+<body>
+
+    <h1>Biểu mẫu dự đoán giá nhà</h1>
+    <form id="houseForm">
+        <div class="form-group">
+            <label for="area">Diện tích (m²):</label>
+            <input type="number" id="area" step="any" required>
+        </div>
+        <div class="form-group">
+            <label for="bedrooms">Số phòng ngủ:</label>
+            <input type="number" id="bedrooms" required>
+        </div>
+        <div class="form-group">
+            <label for="location">Khu vực:</label>
+            <select id="location">
+                <option value="other">Khác</option>
+                <option value="hanoi">Hà Nội</option>
+                <option value="hcmc">TP. Hồ Chí Minh</option>
+            </select>
+        </div>
+        <button type="submit">Dự đoán giá</button>
+    </form>
+
+    <div id="result"></div>
+
+    <script>
+        document.getElementById('houseForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+
+            const area = document.getElementById('area').value;
+            const bedrooms = document.getElementById('bedrooms').value;
+            const location = document.getElementById('location').value;
+            const resultDiv = document.getElementById('result');
+
+            resultDiv.className = '';
+            resultDiv.textContent = 'Đang tính toán dự đoán...';
+
+            try {
+                const response = await fetch(`/predict?area=${encodeURIComponent(area)}&bedrooms=${encodeURIComponent(bedrooms)}&location=${encodeURIComponent(location)}`);
+
+                if (!response.ok) {
+                    throw new Error(`Lỗi máy chủ: ${response.status} ${response.statusText}`);
+                }
+
+                const data = await response.json();
+
+                const formattedPrice = new Intl.NumberFormat('vi-VN', {
+                    style: 'currency',
+                    currency: 'VND'
+                }).format(data.predicted_price);
+
+                resultDiv.textContent = `Giá dự đoán: ${formattedPrice}`;
+            } catch (error) {
+                resultDiv.className = 'error';
+                resultDiv.textContent = `Không thể lấy kết quả dự đoán: ${error.message}`;
+            }
+        });
+    </script>
+
+</body>
+
+</html>
