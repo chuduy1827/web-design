@@ -7,8 +7,8 @@ app = FastAPI(title="House Price Predictor")
 #Task 1: Prediction function (required)
 
 def predict_price(area: float, bedrooms: int, location: str) -> float:
-    base_price = 500_000_000.0
-    total = base_price + (15_000_000.0 * area) + (50_000_000.0 * bedrooms)
+    base_price = 500,000,000
+    total = base_price + (15,000,000 * area) + (50,000,000 * bedrooms)
     
     loc = location.strip().lower()
     if loc == "hanoi":
