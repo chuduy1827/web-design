@@ -1,0 +1,23 @@
+**Calling `/predict` without `location` — why does it still work?**
+`location` is declared as an *optional* query parameter with a default
+value (`location: str = "other"`). FastAPI only requires a query parameter
+when it has no default, so when `location` is omitted the endpoint simply
+falls back to `"other"` instead of raising an error.
+
+**Calling `/predict` without `area` — why does it return a 422?**
+`area` has no default value, so FastAPI treats it as a *required* query
+parameter. When a required parameter is missing, FastAPI's automatic
+request validation (built on Pydantic) rejects the request before the
+endpoint function even runs, returning a `422 Unprocessable Entity` with a
+JSON body explaining which field was missing.
+
+**Why does a relative URL (`/predict?...`) work in `fetch()` now?**
+Because Task 4 mounts the frontend page itself on the FastAPI app
+(`http://127.0.0.1:8000/static/house_form.html`), the HTML page and the
+`/predict` API now share the exact same origin (protocol + host + port).
+A relative URL is resolved by the browser against the page's own origin,
+so `/predict` automatically becomes
+`http://127.0.0.1:8000/predict`. Since there's no cross-origin request
+involved, the browser doesn't need CORS headers to allow it — this is the
+same-origin trick the assignment uses instead of configuring CORS
+middleware.
