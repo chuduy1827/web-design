@@ -1,14 +1,92 @@
-from fastapi import FastAPI, HTTPException, Query
+import logging
+import os
+import time
+from pathlib import Path
+from uuid import uuid4
+
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
-from pathlib import Path
+from starlette.middleware.sessions import SessionMiddleware
 
-app = FastAPI(title="Week 07 Extended Lab - Items API + House Price Predictor")
+
+logger = logging.getLogger(__name__)
+
+app = FastAPI(title="Week 07-08 Lab - Items API + House Price Predictor")
+
+# Week 08 — Sessions middleware. This stores a signed session cookie in the
+# browser. Replace the development secret through SESSION_SECRET_KEY in real use.
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=os.getenv("SESSION_SECRET_KEY", "week-08-development-secret"),
+    max_age=60 * 60,
+    same_site="lax",
+    https_only=False,
+)
 
 # In-memory storage for items
 
 _items: dict[int, dict] = {}
 _next_id: int = 1
+
+
+# Week 08 — Middleware: attach a request ID, measure duration, and log every
+# request after the response has been produced.
+@app.middleware("http")
+async def request_logging_middleware(request: Request, call_next):
+    request_id = request.headers.get("X-Request-ID", str(uuid4()))
+    request.state.request_id = request_id
+    started_at = time.perf_counter()
+
+    try:
+        response = await call_next(request)
+    except Exception:
+        duration_ms = (time.perf_counter() - started_at) * 1000
+        logger.exception(
+            "%s %s failed in %.2f ms request_id=%s",
+            request.method,
+            request.url.path,
+            duration_ms,
+            request_id,
+        )
+        raise
+
+    duration_ms = (time.perf_counter() - started_at) * 1000
+    response.headers["X-Request-ID"] = request_id
+    response.headers["X-Process-Time-ms"] = f"{duration_ms:.2f}"
+    logger.info(
+        "%s %s -> %s in %.2f ms request_id=%s",
+        request.method,
+        request.url.path,
+        response.status_code,
+        duration_ms,
+        request_id,
+    )
+    return response
+
+
+# Week 08 — Dependencies: one reusable dependency validates an item ID and
+# returns the stored item to routes that need an existing item.
+def get_existing_item(item_id: int) -> dict:
+    item = _items.get(item_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail="Item not found")
+    return item
+
+
+class SessionUser(BaseModel):
+    username: str
+
+
+class LoginRequest(BaseModel):
+    username: str = Field(..., min_length=1)
+
+
+def get_current_user(request: Request) -> SessionUser:
+    username = request.session.get("username")
+    if not username:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    return SessionUser(username=username)
 
 
 def _get_next_id() -> int:
@@ -166,7 +244,6 @@ def list_items(
 
     total = len(filtered)
 
-    # Pagination (must be last)
     paginated = filtered[skip: skip + limit]
 
     return ItemListResponse(
@@ -178,21 +255,17 @@ def list_items(
 
 
 @app.get("/items/{item_id}", response_model=ItemPublic)
-def get_item(item_id: int):
-    item = _items.get(item_id)
-    if item is None:
-        raise HTTPException(status_code=404, detail="Item not found")
+def get_item(item: dict = Depends(get_existing_item)):
     return item
 
 
 @app.put("/items/{item_id}", response_model=ItemPublic)
-def update_item(item_id: int, payload: ItemCreate):
-    """Full replace — PUT semantics."""
-    existing = _items.get(item_id)
-    if existing is None:
-        raise HTTPException(status_code=404, detail="Item not found")
+def update_item(
+    payload: ItemCreate,
+    existing: dict = Depends(get_existing_item),
+):
+    item_id = existing["id"]
 
-    # Part C — duplicate check when renaming 
     if payload.name.strip().lower() != existing["name"].strip().lower():
         if _find_duplicate_name(payload.name, exclude_id=item_id):
             raise HTTPException(status_code=409, detail="Item with this name already exists")
@@ -203,22 +276,21 @@ def update_item(item_id: int, payload: ItemCreate):
 
 
 @app.patch("/items/{item_id}", response_model=ItemPublic)
-def patch_item(item_id: int, payload: ItemUpdate):
+def patch_item(
+    payload: ItemUpdate,
+    existing: dict = Depends(get_existing_item),
+):
     """Part A — partial update, only touch fields the client sent."""
-    existing = _items.get(item_id)
-    if existing is None:
-        raise HTTPException(status_code=404, detail="Item not found")
+    item_id = existing["id"]
 
     update_data = payload.model_dump(exclude_unset=True)
 
-    # Part C — if name is being changed, check for duplicates
     if "name" in update_data and update_data["name"] is not None:
         new_name = update_data["name"]
         if new_name.strip().lower() != existing["name"].strip().lower():
             if _find_duplicate_name(new_name, exclude_id=item_id):
                 raise HTTPException(status_code=409, detail="Item with this name already exists")
 
-    # Only update provided fields
     for field, value in update_data.items():
         if value is not None:
             existing[field] = value
@@ -228,14 +300,28 @@ def patch_item(item_id: int, payload: ItemUpdate):
 
 
 @app.delete("/items/{item_id}", status_code=204)
-def delete_item(item_id: int):
-    if item_id not in _items:
-        raise HTTPException(status_code=404, detail="Item not found")
-    del _items[item_id]
+def delete_item(existing: dict = Depends(get_existing_item)):
+    del _items[existing["id"]]
     return None
 
+
+def session_login(payload: LoginRequest, request: Request):
+    request.session["username"] = payload.username.strip()
+    return {"message": "Logged in", "username": request.session["username"]}
+
+
+@app.get("/session/me")
+def session_me(user: SessionUser = Depends(get_current_user)):
+    return user
+
+
+@app.post("/session/logout")
+def session_logout(request: Request):
+    request.session.clear()
+    return {"message": "Logged out"}
+
+
 _static_dir = Path(__file__).parent / ".." / "frontend"
-# Try common locations
 _candidates = [
     Path(__file__).parent / "frontend",
     Path(__file__).parent / ".." / "frontend",
