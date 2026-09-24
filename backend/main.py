@@ -96,18 +96,6 @@ def _get_next_id() -> int:
     return nid
 
 
-def _find_duplicate_name(name: str, exclude_id: int | None = None) -> bool:
-    """Case-insensitive duplicate check."""
-    lower = name.strip().lower()
-    for iid, item in _items.items():
-        if exclude_id is not None and iid == exclude_id:
-            continue
-        if item["name"].strip().lower() == lower:
-            return True
-    return False
-
-# Pydantic models — Items
-
 class ItemCreate(BaseModel):
     name: str = Field(..., min_length=1, description="Item name")
     price: float = Field(..., ge=0, description="Item price (non-negative)")
@@ -125,16 +113,6 @@ class ItemUpdate(BaseModel):
     price: float | None = Field(None, ge=0)
 
 
-class ItemListResponse(BaseModel):
-    """Part D — envelope pattern."""
-    items: list[ItemPublic]
-    total: int
-    skip: int
-    limit: int
-
-
-
-# Pydantic models — House price prediction (Part E)
 
 class HousePriceRequest(BaseModel):
     area_sqm: float = Field(..., gt=0, description="Area in square meters, must be > 0")
@@ -191,17 +169,6 @@ def predict_house_price(payload: HousePriceRequest):
     return HousePricePrediction(predicted_price=float(price), currency="VND")
 
 
-# Items CRUD
-
-@app.post("/items", response_model=ItemPublic, status_code=201)
-def create_item(payload: ItemCreate):
-    # Part C — duplicate name check (case-insensitive)
-    if _find_duplicate_name(payload.name):
-        raise HTTPException(status_code=409, detail="Item with this name already exists")
-    item_id = _get_next_id()
-    item = {"id": item_id, "name": payload.name, "price": payload.price}
-    _items[item_id] = item
-    return item
 
 
 @app.get("/items", response_model=ItemListResponse)
@@ -242,16 +209,6 @@ def list_items(
     else:  # id
         filtered.sort(key=lambda x: x["id"], reverse=reverse)
 
-    total = len(filtered)
-
-    paginated = filtered[skip: skip + limit]
-
-    return ItemListResponse(
-        items=[ItemPublic(**it) for it in paginated],
-        total=total,
-        skip=skip,
-        limit=limit,
-    )
 
 
 @app.get("/items/{item_id}", response_model=ItemPublic)
@@ -265,10 +222,6 @@ def update_item(
     existing: dict = Depends(get_existing_item),
 ):
     item_id = existing["id"]
-
-    if payload.name.strip().lower() != existing["name"].strip().lower():
-        if _find_duplicate_name(payload.name, exclude_id=item_id):
-            raise HTTPException(status_code=409, detail="Item with this name already exists")
 
     updated = {"id": item_id, "name": payload.name, "price": payload.price}
     _items[item_id] = updated
@@ -285,11 +238,6 @@ def patch_item(
 
     update_data = payload.model_dump(exclude_unset=True)
 
-    if "name" in update_data and update_data["name"] is not None:
-        new_name = update_data["name"]
-        if new_name.strip().lower() != existing["name"].strip().lower():
-            if _find_duplicate_name(new_name, exclude_id=item_id):
-                raise HTTPException(status_code=409, detail="Item with this name already exists")
 
     for field, value in update_data.items():
         if value is not None:
